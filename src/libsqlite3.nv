@@ -1,0 +1,409 @@
+// The C entry points of libsqlite3, one novo-lang declaration each.
+//
+// A pointer is an `Int`: the C API hands out two opaque handles, the
+// database connection `sqlite3*` and the prepared statement
+// `sqlite3_stmt*`, and this module carries each of them as the address
+// the C library returned.  Zero is the null pointer.
+//
+// An out-parameter is the address of a slot the caller owns.
+// `ptr.alloc_word` in the standard library returns the address of an
+// eight-byte slot, which is the width libsqlite3 writes for a handle,
+// and `ptr.read_word` reads it back.
+//
+// A `Str` argument is passed as a NUL-terminated C string.  Where the
+// C function also takes a byte length, the length is passed; a
+// negative length tells libsqlite3 to read up to the terminator.
+//
+// A `const char *` return value is an address the library owns.  Read
+// it with `ptr.read_str` and do not free it.
+//
+// Every entry point that takes or returns an `sqlite3_value`, a
+// function pointer or a structure by value is not here.  The README's
+// "What is not included" section lists them.
+
+// Open a connection to a new or existing database file.
+//
+// `filename` is a path, or `":memory:"` for a private in-memory
+// database, or the empty string for a private temporary file.  The
+// connection handle is written to the eight-byte slot at `db_out`.
+// Answers 0, `SQLITE_OK`, on success and a non-zero result code
+// otherwise.  A handle is written even on failure, so the caller
+// closes it either way and reads `sqlite3_errmsg` from it.
+pub @ffi(library = "sqlite3", symbol = "sqlite3_open")
+fn sqlite3_open(filename: Str, db_out: Int) -> Int [io, ffi]
+
+// Open a connection with explicit flags and a named virtual file
+// system.
+//
+// `flags` is at least one of `SQLITE_OPEN_READONLY` (1),
+// `SQLITE_OPEN_READWRITE` (2) and `SQLITE_OPEN_CREATE` (4), combined
+// with a bitwise or.  `vfs` is the address of a NUL-terminated name,
+// or 0 for the default virtual file system.
+pub @ffi(library = "sqlite3", symbol = "sqlite3_open_v2")
+fn sqlite3_open_v2(filename: Str, db_out: Int, flags: Int, vfs: Int) -> Int [io, ffi]
+
+// Close a database connection.
+//
+// Answers 0 when the connection was closed.  Answers 5, `SQLITE_BUSY`,
+// when a prepared statement on the connection has not been finalized,
+// and the connection stays open.
+pub @ffi(library = "sqlite3", symbol = "sqlite3_close")
+fn sqlite3_close(db: Int) -> Int [io, ffi]
+
+// Close a database connection once its last statement is finished.
+//
+// Unlike `sqlite3_close`, this marks a connection with unfinalized
+// statements as a zombie and closes it when the last of them is
+// finalized.  It answers 0 in that case rather than `SQLITE_BUSY`.
+pub @ffi(library = "sqlite3", symbol = "sqlite3_close_v2")
+fn sqlite3_close_v2(db: Int) -> Int [io, ffi]
+
+// Run one or more semicolon-separated statements in one call.
+//
+// `callback` is the address of a C function called once per result
+// row, or 0 for no callback.  `arg` is passed to the callback
+// unchanged.  `errmsg_out` is the address of a slot; on failure the
+// address of a message allocated by libsqlite3 is written there, and
+// the caller releases it with `sqlite3_free`.  Pass 0 to discard it.
+pub @ffi(library = "sqlite3", symbol = "sqlite3_exec")
+fn sqlite3_exec(db: Int, sql: Str, callback: Int, arg: Int, errmsg_out: Int) -> Int [io, ffi]
+
+// Set how long a locked connection keeps retrying before it gives up.
+//
+// `ms` is in milliseconds.  A value of zero or less turns the retrying
+// off, and a locked connection answers 5, `SQLITE_BUSY`, at once.
+pub @ffi(library = "sqlite3", symbol = "sqlite3_busy_timeout")
+fn sqlite3_busy_timeout(db: Int, ms: Int) -> Int [ffi]
+
+// Get the filename of an attached database.
+//
+// `db_name` is `"main"`, `"temp"` or the name a database was attached
+// under.  The return value is the address of a NUL-terminated C string
+// the connection owns.  It is the empty string for a temporary or
+// in-memory database, and 0 when no database of that name is attached.
+pub @ffi(library = "sqlite3", symbol = "sqlite3_db_filename")
+fn sqlite3_db_filename(db: Int, db_name: Str) -> Int [ffi]
+
+// Ask whether the connection is in autocommit mode.
+//
+// Answers 1 when it is, which is the state of a connection with no
+// transaction open.  A `BEGIN` turns it off and a `COMMIT` or
+// `ROLLBACK` turns it back on.
+pub @ffi(library = "sqlite3", symbol = "sqlite3_get_autocommit")
+fn sqlite3_get_autocommit(db: Int) -> Int [ffi]
+
+// Interrupt a query in progress on another thread.
+//
+// The interrupted `sqlite3_step` answers 9, `SQLITE_INTERRUPT`, and
+// any transaction it was inside is rolled back.  Calling this on an
+// idle connection does nothing.
+pub @ffi(library = "sqlite3", symbol = "sqlite3_interrupt")
+fn sqlite3_interrupt(db: Int) [ffi]
+
+// Turn the extended result codes on or off for a connection.
+//
+// `onoff` is 1 to turn them on.  The extended codes carry the primary
+// code in their low eight bits and a reason in the rest, so
+// `SQLITE_IOERR` (10) becomes `SQLITE_IOERR_READ` (266) and its
+// neighbours.  They are off by default.
+pub @ffi(library = "sqlite3", symbol = "sqlite3_extended_result_codes")
+fn sqlite3_extended_result_codes(db: Int, onoff: Int) -> Int [ffi]
+
+// Compile one SQL statement into a prepared statement.
+//
+// `n_byte` is the length of `sql` in bytes, or a negative number to
+// read up to the first zero byte.  The statement handle is written to
+// the slot at `stmt_out`, and the address of the first byte past the
+// statement is written to the slot at `tail_out`; pass 0 for
+// `tail_out` when the text holds one statement.  A text holding only
+// whitespace and comments is not an error: the call answers 0 and
+// writes a null handle.
+pub @ffi(library = "sqlite3", symbol = "sqlite3_prepare_v2")
+fn sqlite3_prepare_v2(db: Int, sql: Str, n_byte: Int, stmt_out: Int, tail_out: Int) -> Int [io, ffi]
+
+// Compile one SQL statement, with preparation flags.
+//
+// The arguments are those of `sqlite3_prepare_v2` with `prep_flags`
+// inserted after the length.  `SQLITE_PREPARE_PERSISTENT` (1) tells
+// libsqlite3 the statement will be kept for a long time, so the
+// planner avoids the lookaside memory it reserves for short-lived
+// statements.
+pub @ffi(library = "sqlite3", symbol = "sqlite3_prepare_v3")
+fn sqlite3_prepare_v3(db: Int, sql: Str, n_byte: Int, prep_flags: Int, stmt_out: Int,
+                      tail_out: Int) -> Int [io, ffi]
+
+// Advance a prepared statement to its next result row.
+//
+// Answers 100, `SQLITE_ROW`, when a row is available and the column
+// entry points may be read.  Answers 101, `SQLITE_DONE`, when the
+// statement has finished.  Any other value is an error, and
+// `sqlite3_reset` or `sqlite3_finalize` reports which.
+pub @ffi(library = "sqlite3", symbol = "sqlite3_step")
+fn sqlite3_step(stmt: Int) -> Int [io, ffi]
+
+// Destroy a prepared statement.
+//
+// Answers 0 when the most recent run of the statement succeeded, and
+// the result code of that run when it did not.  Finalizing a null
+// handle is allowed and answers 0.
+pub @ffi(library = "sqlite3", symbol = "sqlite3_finalize")
+fn sqlite3_finalize(stmt: Int) -> Int [io, ffi]
+
+// Reset a prepared statement so it can be run again.
+//
+// The bound parameter values are kept; `sqlite3_clear_bindings`
+// removes them.  Answers the result code of the run that just ended,
+// which is how the error from a failed `sqlite3_step` is read.
+pub @ffi(library = "sqlite3", symbol = "sqlite3_reset")
+fn sqlite3_reset(stmt: Int) -> Int [io, ffi]
+
+// Set every parameter of a prepared statement back to NULL.
+pub @ffi(library = "sqlite3", symbol = "sqlite3_clear_bindings")
+fn sqlite3_clear_bindings(stmt: Int) -> Int [ffi]
+
+// Get the SQL text a prepared statement was compiled from.
+//
+// The return value is the address of a NUL-terminated C string the
+// statement owns.  The text is the original one, with the parameter
+// markers still in it.
+pub @ffi(library = "sqlite3", symbol = "sqlite3_sql")
+fn sqlite3_sql(stmt: Int) -> Int [ffi]
+
+// Ask whether a prepared statement writes to the database.
+//
+// Answers 1 when the statement makes no direct change to any database
+// file.  `BEGIN`, `COMMIT` and `ROLLBACK` count as read-only by this
+// measure, and so does a statement that is entirely a comment.
+pub @ffi(library = "sqlite3", symbol = "sqlite3_stmt_readonly")
+fn sqlite3_stmt_readonly(stmt: Int) -> Int [ffi]
+
+// Bind a 64-bit integer to a parameter of a prepared statement.
+//
+// `index` is one-based: the leftmost parameter is 1.  Answers 0 on
+// success and 25, `SQLITE_RANGE`, when the index is outside the
+// statement's parameters.
+pub @ffi(library = "sqlite3", symbol = "sqlite3_bind_int64")
+fn sqlite3_bind_int64(stmt: Int, index: Int, value: Int) -> Int [ffi]
+
+// Bind a floating-point number to a parameter of a prepared statement.
+//
+// `index` is one-based.  The value is stored as an IEEE-754 double.
+pub @ffi(library = "sqlite3", symbol = "sqlite3_bind_double")
+fn sqlite3_bind_double(stmt: Int, index: Int, value: Float) -> Int [ffi]
+
+// Bind text to a parameter of a prepared statement.
+//
+// `index` is one-based.  `n_byte` is the length of the text in bytes,
+// or a negative number to read up to the first zero byte.
+// `destructor` says who owns the bytes: 0, `SQLITE_STATIC`, promises
+// they outlive the statement, and -1, `SQLITE_TRANSIENT`, tells
+// libsqlite3 to take its own copy before returning.
+pub @ffi(library = "sqlite3", symbol = "sqlite3_bind_text")
+fn sqlite3_bind_text(stmt: Int, index: Int, value: Str, n_byte: Int, destructor: Int) -> Int [ffi]
+
+// Bind a block of bytes to a parameter of a prepared statement.
+//
+// `data` is the address of the bytes and `n_byte` their length.
+// `destructor` works as it does in `sqlite3_bind_text`.  A null
+// address binds a NULL rather than an empty blob.
+pub @ffi(library = "sqlite3", symbol = "sqlite3_bind_blob")
+fn sqlite3_bind_blob(stmt: Int, index: Int, data: Int, n_byte: Int, destructor: Int) -> Int [ffi]
+
+// Bind NULL to a parameter of a prepared statement.
+//
+// `index` is one-based.  A parameter that was never bound is already
+// NULL, so this is for clearing one that was.
+pub @ffi(library = "sqlite3", symbol = "sqlite3_bind_null")
+fn sqlite3_bind_null(stmt: Int, index: Int) -> Int [ffi]
+
+// Bind a blob of `n` zero bytes to a parameter, without storing them.
+//
+// The blob reads back as `n` zero bytes and costs no memory until it
+// is written.  This is how space for an incremental blob write is
+// reserved.
+pub @ffi(library = "sqlite3", symbol = "sqlite3_bind_zeroblob")
+fn sqlite3_bind_zeroblob(stmt: Int, index: Int, n: Int) -> Int [ffi]
+
+// Get the number of parameters in a prepared statement.
+//
+// The answer is the largest parameter number, so a statement using
+// `?1` and `?3` and nothing else answers 3.
+pub @ffi(library = "sqlite3", symbol = "sqlite3_bind_parameter_count")
+fn sqlite3_bind_parameter_count(stmt: Int) -> Int [ffi]
+
+// Get the index of a named parameter.
+//
+// `name` includes the marker character, so a parameter written `:id`
+// is looked up as `":id"`.  Answers 0 when there is no parameter of
+// that name.
+pub @ffi(library = "sqlite3", symbol = "sqlite3_bind_parameter_index")
+fn sqlite3_bind_parameter_index(stmt: Int, name: Str) -> Int [ffi]
+
+// Get the name of a parameter by its one-based index.
+//
+// The return value is the address of a NUL-terminated C string the
+// statement owns, or 0 for a nameless `?` parameter.
+pub @ffi(library = "sqlite3", symbol = "sqlite3_bind_parameter_name")
+fn sqlite3_bind_parameter_name(stmt: Int, index: Int) -> Int [ffi]
+
+// Get the number of columns in the result set of a prepared statement.
+//
+// Answers 0 for a statement that returns no data, such as an `UPDATE`.
+// This may be called before the first `sqlite3_step`.
+pub @ffi(library = "sqlite3", symbol = "sqlite3_column_count")
+fn sqlite3_column_count(stmt: Int) -> Int [ffi]
+
+// Get the storage class of a column in the current result row.
+//
+// `index` is zero-based.  The answer is 1 for an integer, 2 for a
+// float, 3 for text, 4 for a blob and 5 for NULL.  It is only
+// meaningful after `sqlite3_step` answered 100, `SQLITE_ROW`, and a
+// call to one of the other column entry points may change it.
+pub @ffi(library = "sqlite3", symbol = "sqlite3_column_type")
+fn sqlite3_column_type(stmt: Int, index: Int) -> Int [ffi]
+
+// Read a column of the current result row as a 64-bit integer.
+//
+// `index` is zero-based.  A NULL reads as 0, a float is truncated
+// towards zero, and text is converted when it looks like a number and
+// reads as 0 when it does not.
+pub @ffi(library = "sqlite3", symbol = "sqlite3_column_int64")
+fn sqlite3_column_int64(stmt: Int, index: Int) -> Int [ffi]
+
+// Read a column of the current result row as a floating-point number.
+//
+// `index` is zero-based.  A NULL reads as 0.0.
+pub @ffi(library = "sqlite3", symbol = "sqlite3_column_double")
+fn sqlite3_column_double(stmt: Int, index: Int) -> Float [ffi]
+
+// Read a column of the current result row as text.
+//
+// The return value is the address of a NUL-terminated UTF-8 string the
+// statement owns, or 0 for a NULL column.  It is valid until the next
+// `sqlite3_step`, `sqlite3_reset` or `sqlite3_finalize` on this
+// statement.
+pub @ffi(library = "sqlite3", symbol = "sqlite3_column_text")
+fn sqlite3_column_text(stmt: Int, index: Int) -> Int [ffi]
+
+// Read a column of the current result row as a block of bytes.
+//
+// The return value is the address of the bytes, which the statement
+// owns and which may contain zeroes.  `sqlite3_column_bytes` gives the
+// length.  A zero-length blob answers 0, and so does a NULL.
+pub @ffi(library = "sqlite3", symbol = "sqlite3_column_blob")
+fn sqlite3_column_blob(stmt: Int, index: Int) -> Int [ffi]
+
+// Get the size in bytes of a column of the current result row.
+//
+// For a blob this is the number of bytes, and for text the number of
+// bytes excluding the terminator.  Call it after
+// `sqlite3_column_blob` or `sqlite3_column_text` and not before: the
+// conversion those perform is what fixes the length.
+pub @ffi(library = "sqlite3", symbol = "sqlite3_column_bytes")
+fn sqlite3_column_bytes(stmt: Int, index: Int) -> Int [ffi]
+
+// Get the name assigned to a column of the result set.
+//
+// `index` is zero-based.  The return value is the address of a
+// NUL-terminated C string the statement owns.  The name is the one an
+// `AS` clause gave the column, and is otherwise unspecified.
+pub @ffi(library = "sqlite3", symbol = "sqlite3_column_name")
+fn sqlite3_column_name(stmt: Int, index: Int) -> Int [ffi]
+
+// Get the declared type of a column of the result set.
+//
+// The return value is the address of a NUL-terminated C string, or 0
+// when the column is an expression rather than a table column.  A
+// declared type is the text from the `CREATE TABLE` statement, and a
+// stored value need not match it.
+pub @ffi(library = "sqlite3", symbol = "sqlite3_column_decltype")
+fn sqlite3_column_decltype(stmt: Int, index: Int) -> Int [ffi]
+
+// Get the result code of the most recent failed call on a connection.
+//
+// The value is the primary result code, in the range 0 to 28.
+pub @ffi(library = "sqlite3", symbol = "sqlite3_errcode")
+fn sqlite3_errcode(db: Int) -> Int [ffi]
+
+// Get the extended result code of the most recent failed call.
+//
+// The low eight bits are the primary code and the rest name the
+// reason.  This answers an extended code whether or not
+// `sqlite3_extended_result_codes` was turned on.
+pub @ffi(library = "sqlite3", symbol = "sqlite3_extended_errcode")
+fn sqlite3_extended_errcode(db: Int) -> Int [ffi]
+
+// Get the message describing the most recent failed call.
+//
+// The return value is the address of a NUL-terminated UTF-8 string the
+// connection owns.  It is valid until the next call on the connection.
+pub @ffi(library = "sqlite3", symbol = "sqlite3_errmsg")
+fn sqlite3_errmsg(db: Int) -> Int [ffi]
+
+// Get the English text describing a result code.
+//
+// The return value is the address of a NUL-terminated C string the
+// library owns.  This is the generic text for the code and carries
+// none of the detail `sqlite3_errmsg` has.
+pub @ffi(library = "sqlite3", symbol = "sqlite3_errstr")
+fn sqlite3_errstr(code: Int) -> Int [ffi]
+
+// Get the number of rows the most recent statement changed.
+//
+// Only `INSERT`, `UPDATE` and `DELETE` are counted.  Rows changed by a
+// trigger or by a foreign key action are not, and neither is a row
+// removed by a `DELETE` with no `WHERE` clause on a table with no
+// triggers, which libsqlite3 may truncate instead.
+pub @ffi(library = "sqlite3", symbol = "sqlite3_changes")
+fn sqlite3_changes(db: Int) -> Int [ffi]
+
+// Get the number of rows changed since the connection was opened.
+//
+// The same rows are counted as by `sqlite3_changes`, summed over every
+// statement the connection has run.
+pub @ffi(library = "sqlite3", symbol = "sqlite3_total_changes")
+fn sqlite3_total_changes(db: Int) -> Int [ffi]
+
+// Get the rowid of the most recent successful insert on a connection.
+//
+// Answers 0 when no row has ever been inserted.  A table declared
+// `WITHOUT ROWID` has no rowid and does not change this value.
+pub @ffi(library = "sqlite3", symbol = "sqlite3_last_insert_rowid")
+fn sqlite3_last_insert_rowid(db: Int) -> Int [ffi]
+
+// Release memory libsqlite3 allocated.
+//
+// The one address a caller gets that must be released this way is the
+// error message `sqlite3_exec` writes.  Freeing the null address is
+// allowed and does nothing.
+pub @ffi(library = "sqlite3", symbol = "sqlite3_free")
+fn sqlite3_free(addr: Int) [ffi]
+
+// Ask whether a string holds at least one complete SQL statement.
+//
+// Answers 1 when the text ends with a semicolon that is not inside a
+// string literal, a comment or a `CREATE TRIGGER` body.  This is how
+// an interactive shell decides whether to run a line or ask for more.
+pub @ffi(library = "sqlite3", symbol = "sqlite3_complete")
+fn sqlite3_complete(sql: Str) -> Int [ffi]
+
+// Get the version of the library as text.
+//
+// The return value is the address of a NUL-terminated C string the
+// library owns, in the form `"3.45.1"`.
+pub @ffi(library = "sqlite3", symbol = "sqlite3_libversion")
+fn sqlite3_libversion() -> Int [ffi]
+
+// Get the version of the library as a number.
+//
+// The value is the major version times a million, plus the minor
+// version times a thousand, plus the release: 3.45.1 answers 3045001.
+pub @ffi(library = "sqlite3", symbol = "sqlite3_libversion_number")
+fn sqlite3_libversion_number() -> Int [ffi]
+
+// Get the identifier of the source the library was built from.
+//
+// The return value is the address of a NUL-terminated C string holding
+// a date, a time and the hash of the check-in.
+pub @ffi(library = "sqlite3", symbol = "sqlite3_sourceid")
+fn sqlite3_sourceid() -> Int [ffi]

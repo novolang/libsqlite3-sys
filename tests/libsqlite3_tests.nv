@@ -1,0 +1,208 @@
+// API tests for the libsqlite3 bindings.
+//
+// Every test below calls into the C library, so the suite needs
+// libsqlite3 installed and linked.  `novo pkg build` type-checks the
+// declarations without it; `novo test` runs them and does not.
+//
+// Every database here is `":memory:"`, so the suite creates no file
+// and leaves nothing behind.
+
+use std.test
+use libsqlite3
+
+// `SQLITE_OK`.
+const OK: Int = 0
+
+// `SQLITE_ROW`, the answer from `sqlite3_step` when a row is ready.
+const ROW: Int = 100
+
+// `SQLITE_DONE`, the answer from `sqlite3_step` when there are no more.
+const DONE: Int = 101
+
+@test
+fn test_the_library_reports_its_own_version() [io]
+    test.case("sqlite3_libversion, sqlite3_libversion_number, sqlite3_sourceid")
+    let text = ptr.read_str(libsqlite3.sqlite3_libversion())
+    test.assert(str.len(text) > 0)
+    test.assert(libsqlite3.sqlite3_libversion_number() >= 3000000)
+    test.assert(str.len(ptr.read_str(libsqlite3.sqlite3_sourceid())) > 0)
+
+@test
+fn test_a_result_code_has_generic_text() [io]
+    test.case("sqlite3_errstr")
+    test.assert(str.len(ptr.read_str(libsqlite3.sqlite3_errstr(OK))) > 0)
+    test.assert(str.len(ptr.read_str(libsqlite3.sqlite3_errstr(1))) > 0)
+
+@test
+fn test_a_statement_is_complete_only_after_its_semicolon() [io]
+    test.case("sqlite3_complete")
+    test.assert(libsqlite3.sqlite3_complete("SELECT 1;") == 1)
+    test.assert(libsqlite3.sqlite3_complete("SELECT 1") == 0)
+
+@test
+fn test_an_in_memory_database_opens_and_closes() [io, ffi]
+    test.case("sqlite3_open, sqlite3_close and the connection accessors")
+    let slot = ptr.alloc_word()
+    test.assert(libsqlite3.sqlite3_open(":memory:", slot) == OK)
+    let db = ptr.read_word(slot)
+    test.assert(db != 0)
+    // A fresh connection has no failure to report and no transaction.
+    test.assert(libsqlite3.sqlite3_errcode(db) == OK)
+    test.assert(libsqlite3.sqlite3_extended_errcode(db) == OK)
+    test.assert(str.len(ptr.read_str(libsqlite3.sqlite3_errmsg(db))) > 0)
+    test.assert(libsqlite3.sqlite3_get_autocommit(db) == 1)
+    test.assert(libsqlite3.sqlite3_busy_timeout(db, 250) == OK)
+    test.assert(libsqlite3.sqlite3_extended_result_codes(db, 1) == OK)
+    // An in-memory database has the empty string for a filename.
+    test.assert(ptr.read_str(libsqlite3.sqlite3_db_filename(db, "main")) == "")
+    // Interrupting an idle connection does nothing and answers nothing.
+    libsqlite3.sqlite3_interrupt(db)
+    test.assert(libsqlite3.sqlite3_close(db) == OK)
+    ptr.free(slot)
+
+@test
+fn test_open_v2_takes_flags_and_close_v2_takes_a_zombie() [io, ffi]
+    test.case("sqlite3_open_v2 with READWRITE|CREATE, then sqlite3_close_v2")
+    let slot = ptr.alloc_word()
+    // 2 is SQLITE_OPEN_READWRITE and 4 is SQLITE_OPEN_CREATE; 0 asks
+    // for the default virtual file system.
+    test.assert(libsqlite3.sqlite3_open_v2(":memory:", slot, 6, 0) == OK)
+    let db = ptr.read_word(slot)
+    test.assert(db != 0)
+    test.assert(libsqlite3.sqlite3_close_v2(db) == OK)
+    ptr.free(slot)
+
+@test
+fn test_exec_creates_a_table_and_the_counters_move() [io, ffi]
+    test.case("sqlite3_exec, sqlite3_changes, sqlite3_total_changes")
+    let slot = ptr.alloc_word()
+    let err_slot = ptr.alloc_word()
+    let _ = libsqlite3.sqlite3_open(":memory:", slot)
+    let db = ptr.read_word(slot)
+    let create = "CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT, size REAL)"
+    test.assert(libsqlite3.sqlite3_exec(db, create, 0, 0, err_slot) == OK)
+    test.assert(libsqlite3.sqlite3_exec(db, "INSERT INTO t (name) VALUES ('a')", 0, 0, 0) == OK)
+    test.assert(libsqlite3.sqlite3_changes(db) == 1)
+    test.assert(libsqlite3.sqlite3_total_changes(db) >= 1)
+    test.assert(libsqlite3.sqlite3_last_insert_rowid(db) == 1)
+    // A failing statement writes a message the caller releases.
+    let bad = libsqlite3.sqlite3_exec(db, "SELECT nosuchcolumn FROM t", 0, 0, err_slot)
+    test.assert(bad != OK)
+    let message = ptr.read_word(err_slot)
+    test.assert(str.len(ptr.read_str(message)) > 0)
+    libsqlite3.sqlite3_free(message)
+    let _ = libsqlite3.sqlite3_close(db)
+    ptr.free(err_slot)
+    ptr.free(slot)
+
+@test
+fn test_a_statement_prepares_steps_resets_and_finalizes() [io, ffi]
+    test.case("sqlite3_prepare_v2, sqlite3_step, sqlite3_reset, sqlite3_finalize")
+    let slot = ptr.alloc_word()
+    let stmt_slot = ptr.alloc_word()
+    let _ = libsqlite3.sqlite3_open(":memory:", slot)
+    let db = ptr.read_word(slot)
+    let stmt_text = "SELECT 7"
+    test.assert(libsqlite3.sqlite3_prepare_v2(db, stmt_text, -1, stmt_slot, 0) == OK)
+    let stmt = ptr.read_word(stmt_slot)
+    test.assert(stmt != 0)
+    test.assert(libsqlite3.sqlite3_column_count(stmt) == 1)
+    test.assert(libsqlite3.sqlite3_stmt_readonly(stmt) == 1)
+    test.assert(ptr.read_str(libsqlite3.sqlite3_sql(stmt)) == stmt_text)
+    test.assert(libsqlite3.sqlite3_step(stmt) == ROW)
+    test.assert(libsqlite3.sqlite3_column_int64(stmt, 0) == 7)
+    test.assert(libsqlite3.sqlite3_step(stmt) == DONE)
+    test.assert(libsqlite3.sqlite3_reset(stmt) == OK)
+    test.assert(libsqlite3.sqlite3_clear_bindings(stmt) == OK)
+    test.assert(libsqlite3.sqlite3_finalize(stmt) == OK)
+    let _ = libsqlite3.sqlite3_close(db)
+    ptr.free(stmt_slot)
+    ptr.free(slot)
+
+@test
+fn test_prepare_v3_takes_the_persistent_flag_and_a_tail() [io, ffi]
+    test.case("sqlite3_prepare_v3 with SQLITE_PREPARE_PERSISTENT")
+    let slot = ptr.alloc_word()
+    let stmt_slot = ptr.alloc_word()
+    let tail_slot = ptr.alloc_word()
+    let _ = libsqlite3.sqlite3_open(":memory:", slot)
+    let db = ptr.read_word(slot)
+    // 1 is SQLITE_PREPARE_PERSISTENT.  The text holds two statements,
+    // so the tail slot receives the address of the second.
+    let two = "SELECT 1; SELECT 2;"
+    test.assert(libsqlite3.sqlite3_prepare_v3(db, two, -1, 1, stmt_slot, tail_slot) == OK)
+    let stmt = ptr.read_word(stmt_slot)
+    test.assert(stmt != 0)
+    test.assert(ptr.read_word(tail_slot) != 0)
+    let _ = libsqlite3.sqlite3_finalize(stmt)
+    let _ = libsqlite3.sqlite3_close(db)
+    ptr.free(tail_slot)
+    ptr.free(stmt_slot)
+    ptr.free(slot)
+
+@test
+fn test_every_kind_of_value_binds_to_a_parameter() [io, ffi]
+    test.case("the sqlite3_bind_* family and the parameter lookups")
+    let slot = ptr.alloc_word()
+    let stmt_slot = ptr.alloc_word()
+    let _ = libsqlite3.sqlite3_open(":memory:", slot)
+    let db = ptr.read_word(slot)
+    let stmt_text = "SELECT :count, :ratio, :name, :raw, :nothing, :space"
+    let _ = libsqlite3.sqlite3_prepare_v2(db, stmt_text, -1, stmt_slot, 0)
+    let stmt = ptr.read_word(stmt_slot)
+    test.assert(libsqlite3.sqlite3_bind_parameter_count(stmt) == 6)
+    test.assert(libsqlite3.sqlite3_bind_parameter_index(stmt, ":ratio") == 2)
+    test.assert(libsqlite3.sqlite3_bind_parameter_index(stmt, ":absent") == 0)
+    test.assert(ptr.read_str(libsqlite3.sqlite3_bind_parameter_name(stmt, 1)) == ":count")
+    test.assert(libsqlite3.sqlite3_bind_int64(stmt, 1, 42) == OK)
+    test.assert(libsqlite3.sqlite3_bind_double(stmt, 2, 1.5) == OK)
+    // -1 is SQLITE_TRANSIENT: libsqlite3 copies the bytes before it
+    // returns, so the novo-lang string need not outlive the call.
+    test.assert(libsqlite3.sqlite3_bind_text(stmt, 3, "hello", -1, -1) == OK)
+    let raw = ptr.alloc_word()
+    ptr.write_word(raw, 1)
+    test.assert(libsqlite3.sqlite3_bind_blob(stmt, 4, raw, 8, -1) == OK)
+    test.assert(libsqlite3.sqlite3_bind_null(stmt, 5) == OK)
+    test.assert(libsqlite3.sqlite3_bind_zeroblob(stmt, 6, 4) == OK)
+    // 25 is SQLITE_RANGE: there is no seventh parameter.
+    test.assert(libsqlite3.sqlite3_bind_int64(stmt, 7, 0) == 25)
+    test.assert(libsqlite3.sqlite3_step(stmt) == ROW)
+    test.assert(libsqlite3.sqlite3_column_int64(stmt, 0) == 42)
+    let _ = libsqlite3.sqlite3_finalize(stmt)
+    let _ = libsqlite3.sqlite3_close(db)
+    ptr.free(raw)
+    ptr.free(stmt_slot)
+    ptr.free(slot)
+
+@test
+fn test_every_kind_of_column_reads_back() [io, ffi]
+    test.case("the sqlite3_column_* family over one row of five types")
+    let slot = ptr.alloc_word()
+    let stmt_slot = ptr.alloc_word()
+    let _ = libsqlite3.sqlite3_open(":memory:", slot)
+    let db = ptr.read_word(slot)
+    let create = "CREATE TABLE t (n INTEGER, r REAL, s TEXT, b BLOB, z INTEGER)"
+    let _ = libsqlite3.sqlite3_exec(db, create, 0, 0, 0)
+    let insert = "INSERT INTO t VALUES (9, 2.5, 'abc', x'0102', NULL)"
+    let _ = libsqlite3.sqlite3_exec(db, insert, 0, 0, 0)
+    let stmt_text = "SELECT n, r, s, b, z FROM t"
+    let _ = libsqlite3.sqlite3_prepare_v2(db, stmt_text, -1, stmt_slot, 0)
+    let stmt = ptr.read_word(stmt_slot)
+    test.assert(libsqlite3.sqlite3_step(stmt) == ROW)
+    // The storage classes: 1 integer, 2 float, 3 text, 4 blob, 5 null.
+    test.assert(libsqlite3.sqlite3_column_type(stmt, 0) == 1)
+    test.assert(libsqlite3.sqlite3_column_type(stmt, 1) == 2)
+    test.assert(libsqlite3.sqlite3_column_type(stmt, 2) == 3)
+    test.assert(libsqlite3.sqlite3_column_type(stmt, 3) == 4)
+    test.assert(libsqlite3.sqlite3_column_type(stmt, 4) == 5)
+    test.assert(libsqlite3.sqlite3_column_int64(stmt, 0) == 9)
+    test.assert(libsqlite3.sqlite3_column_double(stmt, 1) == 2.5)
+    test.assert(ptr.read_str(libsqlite3.sqlite3_column_text(stmt, 2)) == "abc")
+    test.assert(libsqlite3.sqlite3_column_blob(stmt, 3) != 0)
+    test.assert(libsqlite3.sqlite3_column_bytes(stmt, 3) == 2)
+    test.assert(ptr.read_str(libsqlite3.sqlite3_column_name(stmt, 0)) == "n")
+    test.assert(ptr.read_str(libsqlite3.sqlite3_column_decltype(stmt, 1)) == "REAL")
+    let _ = libsqlite3.sqlite3_finalize(stmt)
+    let _ = libsqlite3.sqlite3_close(db)
+    ptr.free(stmt_slot)
+    ptr.free(slot)
