@@ -1,6 +1,6 @@
 // The C entry points of libsqlite3, one novo-lang declaration each.
 //
-// A pointer is an `Int`: the C API hands out two opaque handles, the
+// A pointer is an `Int`.  The C API hands out two opaque handles, the
 // database connection `sqlite3*` and the prepared statement
 // `sqlite3_stmt*`, and this module carries each of them as the address
 // the C library returned.  Zero is the null pointer.
@@ -11,15 +11,19 @@
 // and `ptr.read_word` reads it back.
 //
 // A `Str` argument is passed as a NUL-terminated C string.  Where the
-// C function also takes a byte length, the length is passed; a
-// negative length tells libsqlite3 to read up to the terminator.
+// C function also takes a byte length for text, the length is passed,
+// and a negative length tells libsqlite3 to read up to the terminator.
 //
 // A `const char *` return value is an address the library owns.  Read
 // it with `ptr.read_str` and do not free it.
 //
-// Every entry point that takes or returns an `sqlite3_value`, a
-// function pointer or a structure by value is not here.  The README's
+// No entry point that takes or returns an `sqlite3_value`, a function
+// pointer or a structure by value is declared here.  The README's
 // "What is not included" section lists them.
+//
+// The examples in these comments are fenced `novo ignore`, so `novo
+// doc` does not compile them.  A compiled example links against
+// libsqlite3, and the link fails where that library is not installed.
 
 // Open a connection to a new or existing database file.
 //
@@ -29,16 +33,27 @@
 // Answers 0, `SQLITE_OK`, on success and a non-zero result code
 // otherwise.  A handle is written even on failure, so the caller
 // closes it either way and reads `sqlite3_errmsg` from it.
+//
+// ```novo ignore
+// let rc = libsqlite3.sqlite3_open(":memory:", slot)
+// let db = ptr.read_word(slot)
+// ```
 pub @ffi(library = "sqlite3", symbol = "sqlite3_open")
 fn sqlite3_open(filename: Str, db_out: Int) -> Int [io, ffi]
 
 // Open a connection with explicit flags and a named virtual file
 // system.
 //
-// `flags` is at least one of `SQLITE_OPEN_READONLY` (1),
-// `SQLITE_OPEN_READWRITE` (2) and `SQLITE_OPEN_CREATE` (4), combined
-// with a bitwise or.  `vfs` is the address of a NUL-terminated name,
+// `flags` holds one of three combinations: `SQLITE_OPEN_READONLY` (1),
+// `SQLITE_OPEN_READWRITE` (2), or `SQLITE_OPEN_READWRITE` with
+// `SQLITE_OPEN_CREATE` (2 + 4).  Other `SQLITE_OPEN_*` bits may be
+// added to one of them with a bitwise or.  `vfs` is the address of a NUL-terminated name,
 // or 0 for the default virtual file system.
+//
+// ```novo ignore
+// // 1 is SQLITE_OPEN_READONLY.
+// let rc = libsqlite3.sqlite3_open_v2("city.db", slot, 1, 0)
+// ```
 pub @ffi(library = "sqlite3", symbol = "sqlite3_open_v2")
 fn sqlite3_open_v2(filename: Str, db_out: Int, flags: Int, vfs: Int) -> Int [io, ffi]
 
@@ -47,14 +62,22 @@ fn sqlite3_open_v2(filename: Str, db_out: Int, flags: Int, vfs: Int) -> Int [io,
 // Answers 0 when the connection was closed.  Answers 5, `SQLITE_BUSY`,
 // when a prepared statement on the connection has not been finalized,
 // and the connection stays open.
+//
+// ```novo ignore
+// let rc = libsqlite3.sqlite3_close(db)
+// ```
 pub @ffi(library = "sqlite3", symbol = "sqlite3_close")
 fn sqlite3_close(db: Int) -> Int [io, ffi]
 
 // Close a database connection once its last statement is finished.
 //
-// Unlike `sqlite3_close`, this marks a connection with unfinalized
-// statements as a zombie and closes it when the last of them is
-// finalized.  It answers 0 in that case rather than `SQLITE_BUSY`.
+// Where `sqlite3_close` refuses, this marks a connection with
+// unfinalized statements as a zombie and closes it when the last of
+// them is finalized.  It answers 0 in that case rather than `SQLITE_BUSY`.
+//
+// ```novo ignore
+// let rc = libsqlite3.sqlite3_close_v2(db)
+// ```
 pub @ffi(library = "sqlite3", symbol = "sqlite3_close_v2")
 fn sqlite3_close_v2(db: Int) -> Int [io, ffi]
 
@@ -62,9 +85,13 @@ fn sqlite3_close_v2(db: Int) -> Int [io, ffi]
 //
 // `callback` is the address of a C function called once per result
 // row, or 0 for no callback.  `arg` is passed to the callback
-// unchanged.  `errmsg_out` is the address of a slot; on failure the
+// unchanged.  `errmsg_out` is the address of a slot.  On failure the
 // address of a message allocated by libsqlite3 is written there, and
 // the caller releases it with `sqlite3_free`.  Pass 0 to discard it.
+//
+// ```novo ignore
+// let rc = libsqlite3.sqlite3_exec(db, "CREATE TABLE city (name TEXT)", 0, 0, 0)
+// ```
 pub @ffi(library = "sqlite3", symbol = "sqlite3_exec")
 fn sqlite3_exec(db: Int, sql: Str, callback: Int, arg: Int, errmsg_out: Int) -> Int [io, ffi]
 
@@ -72,6 +99,10 @@ fn sqlite3_exec(db: Int, sql: Str, callback: Int, arg: Int, errmsg_out: Int) -> 
 //
 // `ms` is in milliseconds.  A value of zero or less turns the retrying
 // off, and a locked connection answers 5, `SQLITE_BUSY`, at once.
+//
+// ```novo ignore
+// let rc = libsqlite3.sqlite3_busy_timeout(db, 2000)
+// ```
 pub @ffi(library = "sqlite3", symbol = "sqlite3_busy_timeout")
 fn sqlite3_busy_timeout(db: Int, ms: Int) -> Int [ffi]
 
@@ -79,8 +110,12 @@ fn sqlite3_busy_timeout(db: Int, ms: Int) -> Int [ffi]
 //
 // `db_name` is `"main"`, `"temp"` or the name a database was attached
 // under.  The return value is the address of a NUL-terminated C string
-// the connection owns.  It is the empty string for a temporary or
-// in-memory database, and 0 when no database of that name is attached.
+// the connection owns.  For a temporary or in-memory database, and for
+// a name that is not attached, it is either 0 or the empty string.
+//
+// ```novo ignore
+// println(ptr.read_str(libsqlite3.sqlite3_db_filename(db, "main")))
+// ```
 pub @ffi(library = "sqlite3", symbol = "sqlite3_db_filename")
 fn sqlite3_db_filename(db: Int, db_name: Str) -> Int [ffi]
 
@@ -89,14 +124,25 @@ fn sqlite3_db_filename(db: Int, db_name: Str) -> Int [ffi]
 // Answers 1 when it is, which is the state of a connection with no
 // transaction open.  A `BEGIN` turns it off and a `COMMIT` or
 // `ROLLBACK` turns it back on.
+//
+// ```novo ignore
+// let no_transaction_open = libsqlite3.sqlite3_get_autocommit(db) == 1
+// ```
 pub @ffi(library = "sqlite3", symbol = "sqlite3_get_autocommit")
 fn sqlite3_get_autocommit(db: Int) -> Int [ffi]
 
-// Interrupt a query in progress on another thread.
+// Interrupt the statements running on a connection, typically from
+// another thread.
 //
-// The interrupted `sqlite3_step` answers 9, `SQLITE_INTERRUPT`, and
-// any transaction it was inside is rolled back.  Calling this on an
-// idle connection does nothing.
+// An interrupted `sqlite3_step` answers 9, `SQLITE_INTERRUPT`.  An
+// interrupted INSERT, UPDATE or DELETE inside an explicit transaction
+// rolls the whole transaction back.  A statement that is nearly
+// finished may complete instead.  Calling this when no statement is
+// running does nothing.
+//
+// ```novo ignore
+// libsqlite3.sqlite3_interrupt(db)
+// ```
 pub @ffi(library = "sqlite3", symbol = "sqlite3_interrupt")
 fn sqlite3_interrupt(db: Int) [ffi]
 
@@ -106,6 +152,10 @@ fn sqlite3_interrupt(db: Int) [ffi]
 // code in their low eight bits and a reason in the rest, so
 // `SQLITE_IOERR` (10) becomes `SQLITE_IOERR_READ` (266) and its
 // neighbours.  They are off by default.
+//
+// ```novo ignore
+// let rc = libsqlite3.sqlite3_extended_result_codes(db, 1)
+// ```
 pub @ffi(library = "sqlite3", symbol = "sqlite3_extended_result_codes")
 fn sqlite3_extended_result_codes(db: Int, onoff: Int) -> Int [ffi]
 
@@ -114,10 +164,15 @@ fn sqlite3_extended_result_codes(db: Int, onoff: Int) -> Int [ffi]
 // `n_byte` is the length of `sql` in bytes, or a negative number to
 // read up to the first zero byte.  The statement handle is written to
 // the slot at `stmt_out`, and the address of the first byte past the
-// statement is written to the slot at `tail_out`; pass 0 for
+// statement is written to the slot at `tail_out`.  Pass 0 for
 // `tail_out` when the text holds one statement.  A text holding only
-// whitespace and comments is not an error: the call answers 0 and
+// whitespace and comments is not an error.  The call answers 0 and
 // writes a null handle.
+//
+// ```novo ignore
+// let rc = libsqlite3.sqlite3_prepare_v2(db, "SELECT name FROM city", -1, stmt_slot, 0)
+// let stmt = ptr.read_word(stmt_slot)
+// ```
 pub @ffi(library = "sqlite3", symbol = "sqlite3_prepare_v2")
 fn sqlite3_prepare_v2(db: Int, sql: Str, n_byte: Int, stmt_out: Int, tail_out: Int) -> Int [io, ffi]
 
@@ -125,9 +180,13 @@ fn sqlite3_prepare_v2(db: Int, sql: Str, n_byte: Int, stmt_out: Int, tail_out: I
 //
 // The arguments are those of `sqlite3_prepare_v2` with `prep_flags`
 // inserted after the length.  `SQLITE_PREPARE_PERSISTENT` (1) tells
-// libsqlite3 the statement will be kept for a long time, so the
-// planner avoids the lookaside memory it reserves for short-lived
-// statements.
+// libsqlite3 the statement will be kept for a long time and reused.
+// The current implementation acts on it by not using the lookaside
+// memory it reserves for short-lived statements.
+//
+// ```novo ignore
+// let rc = libsqlite3.sqlite3_prepare_v3(db, "SELECT name FROM city", -1, 1, stmt_slot, 0)
+// ```
 pub @ffi(library = "sqlite3", symbol = "sqlite3_prepare_v3")
 fn sqlite3_prepare_v3(db: Int, sql: Str, n_byte: Int, prep_flags: Int, stmt_out: Int,
                       tail_out: Int) -> Int [io, ffi]
@@ -136,8 +195,13 @@ fn sqlite3_prepare_v3(db: Int, sql: Str, n_byte: Int, prep_flags: Int, stmt_out:
 //
 // Answers 100, `SQLITE_ROW`, when a row is available and the column
 // entry points may be read.  Answers 101, `SQLITE_DONE`, when the
-// statement has finished.  Any other value is an error, and
-// `sqlite3_reset` or `sqlite3_finalize` reports which.
+// statement has finished.  Any other value is the result code of the
+// error, and `sqlite3_errmsg` describes it.
+//
+// ```novo ignore
+// while libsqlite3.sqlite3_step(stmt) == 100
+//     println(ptr.read_str(libsqlite3.sqlite3_column_text(stmt, 0)))
+// ```
 pub @ffi(library = "sqlite3", symbol = "sqlite3_step")
 fn sqlite3_step(stmt: Int) -> Int [io, ffi]
 
@@ -146,18 +210,30 @@ fn sqlite3_step(stmt: Int) -> Int [io, ffi]
 // Answers 0 when the most recent run of the statement succeeded, and
 // the result code of that run when it did not.  Finalizing a null
 // handle is allowed and answers 0.
+//
+// ```novo ignore
+// let rc = libsqlite3.sqlite3_finalize(stmt)
+// ```
 pub @ffi(library = "sqlite3", symbol = "sqlite3_finalize")
 fn sqlite3_finalize(stmt: Int) -> Int [io, ffi]
 
 // Reset a prepared statement so it can be run again.
 //
-// The bound parameter values are kept; `sqlite3_clear_bindings`
-// removes them.  Answers the result code of the run that just ended,
-// which is how the error from a failed `sqlite3_step` is read.
+// The bound parameter values are kept, and `sqlite3_clear_bindings`
+// removes them.  Answers 0 when the run that just ended succeeded or
+// never started, and that run's result code when it failed.
+//
+// ```novo ignore
+// let rc = libsqlite3.sqlite3_reset(stmt)
+// ```
 pub @ffi(library = "sqlite3", symbol = "sqlite3_reset")
 fn sqlite3_reset(stmt: Int) -> Int [io, ffi]
 
 // Set every parameter of a prepared statement back to NULL.
+//
+// ```novo ignore
+// let rc = libsqlite3.sqlite3_clear_bindings(stmt)
+// ```
 pub @ffi(library = "sqlite3", symbol = "sqlite3_clear_bindings")
 fn sqlite3_clear_bindings(stmt: Int) -> Int [ffi]
 
@@ -166,28 +242,44 @@ fn sqlite3_clear_bindings(stmt: Int) -> Int [ffi]
 // The return value is the address of a NUL-terminated C string the
 // statement owns.  The text is the original one, with the parameter
 // markers still in it.
+//
+// ```novo ignore
+// println(ptr.read_str(libsqlite3.sqlite3_sql(stmt)))
+// ```
 pub @ffi(library = "sqlite3", symbol = "sqlite3_sql")
 fn sqlite3_sql(stmt: Int) -> Int [ffi]
 
 // Ask whether a prepared statement writes to the database.
 //
 // Answers 1 when the statement makes no direct change to any database
-// file.  `BEGIN`, `COMMIT` and `ROLLBACK` count as read-only by this
-// measure, and so does a statement that is entirely a comment.
+// file, and 0 when it does.  `BEGIN`, `COMMIT`, `ROLLBACK`, `SAVEPOINT`
+// and `RELEASE` count as read-only by this measure.
+//
+// ```novo ignore
+// let reads_only = libsqlite3.sqlite3_stmt_readonly(stmt) == 1
+// ```
 pub @ffi(library = "sqlite3", symbol = "sqlite3_stmt_readonly")
 fn sqlite3_stmt_readonly(stmt: Int) -> Int [ffi]
 
 // Bind a 64-bit integer to a parameter of a prepared statement.
 //
-// `index` is one-based: the leftmost parameter is 1.  Answers 0 on
+// `index` is one-based, so the leftmost parameter is 1.  Answers 0 on
 // success and 25, `SQLITE_RANGE`, when the index is outside the
 // statement's parameters.
+//
+// ```novo ignore
+// let rc = libsqlite3.sqlite3_bind_int64(stmt, 1, 285273)
+// ```
 pub @ffi(library = "sqlite3", symbol = "sqlite3_bind_int64")
 fn sqlite3_bind_int64(stmt: Int, index: Int, value: Int) -> Int [ffi]
 
 // Bind a floating-point number to a parameter of a prepared statement.
 //
 // `index` is one-based.  The value is stored as an IEEE-754 double.
+//
+// ```novo ignore
+// let rc = libsqlite3.sqlite3_bind_double(stmt, 2, 56.16)
+// ```
 pub @ffi(library = "sqlite3", symbol = "sqlite3_bind_double")
 fn sqlite3_bind_double(stmt: Int, index: Int, value: Float) -> Int [ffi]
 
@@ -198,29 +290,47 @@ fn sqlite3_bind_double(stmt: Int, index: Int, value: Float) -> Int [ffi]
 // `destructor` says who owns the bytes: 0, `SQLITE_STATIC`, promises
 // they outlive the statement, and -1, `SQLITE_TRANSIENT`, tells
 // libsqlite3 to take its own copy before returning.
+//
+// ```novo ignore
+// // -1 is SQLITE_TRANSIENT, so libsqlite3 copies the text.
+// let rc = libsqlite3.sqlite3_bind_text(stmt, 1, "Aarhus", -1, -1)
+// ```
 pub @ffi(library = "sqlite3", symbol = "sqlite3_bind_text")
 fn sqlite3_bind_text(stmt: Int, index: Int, value: Str, n_byte: Int, destructor: Int) -> Int [ffi]
 
 // Bind a block of bytes to a parameter of a prepared statement.
 //
-// `data` is the address of the bytes and `n_byte` their length.
+// `data` is the address of the bytes and `n_byte` their length.  A
+// negative length is undefined behaviour here, unlike the text calls.
 // `destructor` works as it does in `sqlite3_bind_text`.  A null
 // address binds a NULL rather than an empty blob.
+//
+// ```novo ignore
+// let rc = libsqlite3.sqlite3_bind_blob(stmt, 1, data, 16, -1)
+// ```
 pub @ffi(library = "sqlite3", symbol = "sqlite3_bind_blob")
 fn sqlite3_bind_blob(stmt: Int, index: Int, data: Int, n_byte: Int, destructor: Int) -> Int [ffi]
 
 // Bind NULL to a parameter of a prepared statement.
 //
 // `index` is one-based.  A parameter that was never bound is already
-// NULL, so this is for clearing one that was.
+// NULL, so the call clears one that was.
+//
+// ```novo ignore
+// let rc = libsqlite3.sqlite3_bind_null(stmt, 1)
+// ```
 pub @ffi(library = "sqlite3", symbol = "sqlite3_bind_null")
 fn sqlite3_bind_null(stmt: Int, index: Int) -> Int [ffi]
 
 // Bind a blob of `n` zero bytes to a parameter, without storing them.
 //
-// The blob reads back as `n` zero bytes and costs no memory until it
-// is written.  This is how space for an incremental blob write is
-// reserved.
+// The blob reads back as `n` zero bytes, and while the statement runs
+// it takes only the memory that records its size.  It is how space for
+// an incremental blob write is reserved.
+//
+// ```novo ignore
+// let rc = libsqlite3.sqlite3_bind_zeroblob(stmt, 1, 4096)
+// ```
 pub @ffi(library = "sqlite3", symbol = "sqlite3_bind_zeroblob")
 fn sqlite3_bind_zeroblob(stmt: Int, index: Int, n: Int) -> Int [ffi]
 
@@ -228,6 +338,10 @@ fn sqlite3_bind_zeroblob(stmt: Int, index: Int, n: Int) -> Int [ffi]
 //
 // The answer is the largest parameter number, so a statement using
 // `?1` and `?3` and nothing else answers 3.
+//
+// ```novo ignore
+// let parameters = libsqlite3.sqlite3_bind_parameter_count(stmt)
+// ```
 pub @ffi(library = "sqlite3", symbol = "sqlite3_bind_parameter_count")
 fn sqlite3_bind_parameter_count(stmt: Int) -> Int [ffi]
 
@@ -236,6 +350,10 @@ fn sqlite3_bind_parameter_count(stmt: Int) -> Int [ffi]
 // `name` includes the marker character, so a parameter written `:id`
 // is looked up as `":id"`.  Answers 0 when there is no parameter of
 // that name.
+//
+// ```novo ignore
+// let index = libsqlite3.sqlite3_bind_parameter_index(stmt, ":name")
+// ```
 pub @ffi(library = "sqlite3", symbol = "sqlite3_bind_parameter_index")
 fn sqlite3_bind_parameter_index(stmt: Int, name: Str) -> Int [ffi]
 
@@ -243,6 +361,10 @@ fn sqlite3_bind_parameter_index(stmt: Int, name: Str) -> Int [ffi]
 //
 // The return value is the address of a NUL-terminated C string the
 // statement owns, or 0 for a nameless `?` parameter.
+//
+// ```novo ignore
+// println(ptr.read_str(libsqlite3.sqlite3_bind_parameter_name(stmt, 1)))
+// ```
 pub @ffi(library = "sqlite3", symbol = "sqlite3_bind_parameter_name")
 fn sqlite3_bind_parameter_name(stmt: Int, index: Int) -> Int [ffi]
 
@@ -250,29 +372,46 @@ fn sqlite3_bind_parameter_name(stmt: Int, index: Int) -> Int [ffi]
 //
 // Answers 0 for a statement that returns no data, such as an `UPDATE`.
 // This may be called before the first `sqlite3_step`.
+//
+// ```novo ignore
+// let columns = libsqlite3.sqlite3_column_count(stmt)
+// ```
 pub @ffi(library = "sqlite3", symbol = "sqlite3_column_count")
 fn sqlite3_column_count(stmt: Int) -> Int [ffi]
 
 // Get the storage class of a column in the current result row.
 //
 // `index` is zero-based.  The answer is 1 for an integer, 2 for a
-// float, 3 for text, 4 for a blob and 5 for NULL.  It is only
-// meaningful after `sqlite3_step` answered 100, `SQLITE_ROW`, and a
-// call to one of the other column entry points may change it.
+// floating-point value, 3 for text, 4 for a blob and 5 for NULL.  It is
+// meaningful only after `sqlite3_step` answered 100, `SQLITE_ROW`.  A
+// read through another column entry point that converts the value
+// makes the answer undefined, so ask for the type first.
+//
+// ```novo ignore
+// let is_null = libsqlite3.sqlite3_column_type(stmt, 1) == 5
+// ```
 pub @ffi(library = "sqlite3", symbol = "sqlite3_column_type")
 fn sqlite3_column_type(stmt: Int, index: Int) -> Int [ffi]
 
 // Read a column of the current result row as a 64-bit integer.
 //
-// `index` is zero-based.  A NULL reads as 0, a float is truncated
-// towards zero, and text is converted when it looks like a number and
-// reads as 0 when it does not.
+// `index` is zero-based.  A NULL reads as 0, and a floating-point value
+// is truncated towards zero.  Text is read by its longest leading
+// integer, and text with none reads as 0.
+//
+// ```novo ignore
+// let people = libsqlite3.sqlite3_column_int64(stmt, 1)
+// ```
 pub @ffi(library = "sqlite3", symbol = "sqlite3_column_int64")
 fn sqlite3_column_int64(stmt: Int, index: Int) -> Int [ffi]
 
 // Read a column of the current result row as a floating-point number.
 //
 // `index` is zero-based.  A NULL reads as 0.0.
+//
+// ```novo ignore
+// let area = libsqlite3.sqlite3_column_double(stmt, 2)
+// ```
 pub @ffi(library = "sqlite3", symbol = "sqlite3_column_double")
 fn sqlite3_column_double(stmt: Int, index: Int) -> Float [ffi]
 
@@ -281,7 +420,11 @@ fn sqlite3_column_double(stmt: Int, index: Int) -> Float [ffi]
 // The return value is the address of a NUL-terminated UTF-8 string the
 // statement owns, or 0 for a NULL column.  It is valid until the next
 // `sqlite3_step`, `sqlite3_reset` or `sqlite3_finalize` on this
-// statement.
+// statement, or until a read of the same column converts it again.
+//
+// ```novo ignore
+// let name = ptr.read_str(libsqlite3.sqlite3_column_text(stmt, 0))
+// ```
 pub @ffi(library = "sqlite3", symbol = "sqlite3_column_text")
 fn sqlite3_column_text(stmt: Int, index: Int) -> Int [ffi]
 
@@ -290,6 +433,10 @@ fn sqlite3_column_text(stmt: Int, index: Int) -> Int [ffi]
 // The return value is the address of the bytes, which the statement
 // owns and which may contain zeroes.  `sqlite3_column_bytes` gives the
 // length.  A zero-length blob answers 0, and so does a NULL.
+//
+// ```novo ignore
+// let data = libsqlite3.sqlite3_column_blob(stmt, 3)
+// ```
 pub @ffi(library = "sqlite3", symbol = "sqlite3_column_blob")
 fn sqlite3_column_blob(stmt: Int, index: Int) -> Int [ffi]
 
@@ -297,8 +444,13 @@ fn sqlite3_column_blob(stmt: Int, index: Int) -> Int [ffi]
 //
 // For a blob this is the number of bytes, and for text the number of
 // bytes excluding the terminator.  Call it after
-// `sqlite3_column_blob` or `sqlite3_column_text` and not before: the
-// conversion those perform is what fixes the length.
+// `sqlite3_column_blob` or `sqlite3_column_text` and not before,
+// because the conversion those perform is what fixes the length.
+//
+// ```novo ignore
+// let data = libsqlite3.sqlite3_column_blob(stmt, 3)
+// let length = libsqlite3.sqlite3_column_bytes(stmt, 3)
+// ```
 pub @ffi(library = "sqlite3", symbol = "sqlite3_column_bytes")
 fn sqlite3_column_bytes(stmt: Int, index: Int) -> Int [ffi]
 
@@ -307,6 +459,10 @@ fn sqlite3_column_bytes(stmt: Int, index: Int) -> Int [ffi]
 // `index` is zero-based.  The return value is the address of a
 // NUL-terminated C string the statement owns.  The name is the one an
 // `AS` clause gave the column, and is otherwise unspecified.
+//
+// ```novo ignore
+// println(ptr.read_str(libsqlite3.sqlite3_column_name(stmt, 0)))
+// ```
 pub @ffi(library = "sqlite3", symbol = "sqlite3_column_name")
 fn sqlite3_column_name(stmt: Int, index: Int) -> Int [ffi]
 
@@ -316,12 +472,22 @@ fn sqlite3_column_name(stmt: Int, index: Int) -> Int [ffi]
 // when the column is an expression rather than a table column.  A
 // declared type is the text from the `CREATE TABLE` statement, and a
 // stored value need not match it.
+//
+// ```novo ignore
+// println(ptr.read_str(libsqlite3.sqlite3_column_decltype(stmt, 0)))
+// ```
 pub @ffi(library = "sqlite3", symbol = "sqlite3_column_decltype")
 fn sqlite3_column_decltype(stmt: Int, index: Int) -> Int [ffi]
 
 // Get the result code of the most recent failed call on a connection.
 //
-// The value is the primary result code, in the range 0 to 28.
+// The value is the primary result code, from 0 to 28, or the extended
+// code once `sqlite3_extended_result_codes` turned those on.  After a
+// call that succeeded the value is undefined.
+//
+// ```novo ignore
+// let busy = libsqlite3.sqlite3_errcode(db) == 5
+// ```
 pub @ffi(library = "sqlite3", symbol = "sqlite3_errcode")
 fn sqlite3_errcode(db: Int) -> Int [ffi]
 
@@ -330,6 +496,10 @@ fn sqlite3_errcode(db: Int) -> Int [ffi]
 // The low eight bits are the primary code and the rest name the
 // reason.  This answers an extended code whether or not
 // `sqlite3_extended_result_codes` was turned on.
+//
+// ```novo ignore
+// let code = libsqlite3.sqlite3_extended_errcode(db)
+// ```
 pub @ffi(library = "sqlite3", symbol = "sqlite3_extended_errcode")
 fn sqlite3_extended_errcode(db: Int) -> Int [ffi]
 
@@ -337,6 +507,10 @@ fn sqlite3_extended_errcode(db: Int) -> Int [ffi]
 //
 // The return value is the address of a NUL-terminated UTF-8 string the
 // connection owns.  It is valid until the next call on the connection.
+//
+// ```novo ignore
+// println(ptr.read_str(libsqlite3.sqlite3_errmsg(db)))
+// ```
 pub @ffi(library = "sqlite3", symbol = "sqlite3_errmsg")
 fn sqlite3_errmsg(db: Int) -> Int [ffi]
 
@@ -345,22 +519,35 @@ fn sqlite3_errmsg(db: Int) -> Int [ffi]
 // The return value is the address of a NUL-terminated C string the
 // library owns.  This is the generic text for the code and carries
 // none of the detail `sqlite3_errmsg` has.
+//
+// ```novo ignore
+// println(ptr.read_str(libsqlite3.sqlite3_errstr(5)))   // database is locked
+// ```
 pub @ffi(library = "sqlite3", symbol = "sqlite3_errstr")
 fn sqlite3_errstr(code: Int) -> Int [ffi]
 
-// Get the number of rows the most recent statement changed.
+// Get the number of rows the most recently completed `INSERT`,
+// `UPDATE` or `DELETE` changed.
 //
-// Only `INSERT`, `UPDATE` and `DELETE` are counted.  Rows changed by a
-// trigger or by a foreign key action are not, and neither is a row
-// removed by a `DELETE` with no `WHERE` clause on a table with no
-// triggers, which libsqlite3 may truncate instead.
+// Only the rows that statement changed directly are counted.  Rows
+// changed by a trigger, by a foreign key action or by `REPLACE`
+// conflict resolution are not.
+//
+// ```novo ignore
+// println("${libsqlite3.sqlite3_changes(db)} row(s) changed")
+// ```
 pub @ffi(library = "sqlite3", symbol = "sqlite3_changes")
 fn sqlite3_changes(db: Int) -> Int [ffi]
 
 // Get the number of rows changed since the connection was opened.
 //
-// The same rows are counted as by `sqlite3_changes`, summed over every
-// statement the connection has run.
+// It sums the rows every completed `INSERT`, `UPDATE` and `DELETE`
+// changed, and unlike `sqlite3_changes` it includes the rows changed
+// by triggers.
+//
+// ```novo ignore
+// println("${libsqlite3.sqlite3_total_changes(db)} row(s) changed in all")
+// ```
 pub @ffi(library = "sqlite3", symbol = "sqlite3_total_changes")
 fn sqlite3_total_changes(db: Int) -> Int [ffi]
 
@@ -368,6 +555,10 @@ fn sqlite3_total_changes(db: Int) -> Int [ffi]
 //
 // Answers 0 when no row has ever been inserted.  A table declared
 // `WITHOUT ROWID` has no rowid and does not change this value.
+//
+// ```novo ignore
+// let rowid = libsqlite3.sqlite3_last_insert_rowid(db)
+// ```
 pub @ffi(library = "sqlite3", symbol = "sqlite3_last_insert_rowid")
 fn sqlite3_last_insert_rowid(db: Int) -> Int [ffi]
 
@@ -376,14 +567,23 @@ fn sqlite3_last_insert_rowid(db: Int) -> Int [ffi]
 // The one address a caller gets that must be released this way is the
 // error message `sqlite3_exec` writes.  Freeing the null address is
 // allowed and does nothing.
+//
+// ```novo ignore
+// libsqlite3.sqlite3_free(ptr.read_word(errmsg_slot))
+// ```
 pub @ffi(library = "sqlite3", symbol = "sqlite3_free")
 fn sqlite3_free(addr: Int) [ffi]
 
 // Ask whether a string holds at least one complete SQL statement.
 //
 // Answers 1 when the text ends with a semicolon that is not inside a
-// string literal, a comment or a `CREATE TRIGGER` body.  This is how
-// an interactive shell decides whether to run a line or ask for more.
+// string literal, a comment or a `CREATE TRIGGER` body, and 0 when it
+// does not.  An interactive shell uses it to decide whether to run a
+// line or ask for more.
+//
+// ```novo ignore
+// let whole = libsqlite3.sqlite3_complete("SELECT 1;") == 1
+// ```
 pub @ffi(library = "sqlite3", symbol = "sqlite3_complete")
 fn sqlite3_complete(sql: Str) -> Int [ffi]
 
@@ -391,13 +591,22 @@ fn sqlite3_complete(sql: Str) -> Int [ffi]
 //
 // The return value is the address of a NUL-terminated C string the
 // library owns, in the form `"3.45.1"`.
+//
+// ```novo ignore
+// println(ptr.read_str(libsqlite3.sqlite3_libversion()))
+// ```
 pub @ffi(library = "sqlite3", symbol = "sqlite3_libversion")
 fn sqlite3_libversion() -> Int [ffi]
 
 // Get the version of the library as a number.
 //
 // The value is the major version times a million, plus the minor
-// version times a thousand, plus the release: 3.45.1 answers 3045001.
+// version times a thousand, plus the release, so 3.45.1 answers
+// 3045001.
+//
+// ```novo ignore
+// let has_returning = libsqlite3.sqlite3_libversion_number() >= 3035000
+// ```
 pub @ffi(library = "sqlite3", symbol = "sqlite3_libversion_number")
 fn sqlite3_libversion_number() -> Int [ffi]
 
@@ -405,5 +614,9 @@ fn sqlite3_libversion_number() -> Int [ffi]
 //
 // The return value is the address of a NUL-terminated C string holding
 // a date, a time and the hash of the check-in.
+//
+// ```novo ignore
+// println(ptr.read_str(libsqlite3.sqlite3_sourceid()))
+// ```
 pub @ffi(library = "sqlite3", symbol = "sqlite3_sourceid")
 fn sqlite3_sourceid() -> Int [ffi]

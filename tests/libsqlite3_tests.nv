@@ -1,8 +1,8 @@
-// API tests for the libsqlite3 bindings.
+// The tests over the entry points of the libsqlite3 bindings.
 //
 // Every test below calls into the C library, so the suite needs
 // libsqlite3 installed and linked.  `novo pkg build` type-checks the
-// declarations without it; `novo test` runs them and does not.
+// declarations without it.  `novo test` runs them and does not.
 //
 // Every database here is `":memory:"`, so the suite creates no file
 // and leaves nothing behind.
@@ -53,9 +53,11 @@ fn test_an_in_memory_database_opens_and_closes() [io, ffi]
     test.assert(libsqlite3.sqlite3_get_autocommit(db) == 1)
     test.assert(libsqlite3.sqlite3_busy_timeout(db, 250) == OK)
     test.assert(libsqlite3.sqlite3_extended_result_codes(db, 1) == OK)
-    // An in-memory database has the empty string for a filename.
+    // An in-memory database has no filename.  The reference allows 0
+    // or the empty string, and the library answers the empty string.
     test.assert(ptr.read_str(libsqlite3.sqlite3_db_filename(db, "main")) == "")
-    // Interrupting an idle connection does nothing and answers nothing.
+    // Interrupting a connection with no statement running does
+    // nothing, and the call answers nothing.
     libsqlite3.sqlite3_interrupt(db)
     test.assert(libsqlite3.sqlite3_close(db) == OK)
     ptr.free(slot)
@@ -64,7 +66,7 @@ fn test_an_in_memory_database_opens_and_closes() [io, ffi]
 fn test_open_v2_takes_flags_and_close_v2_takes_a_zombie() [io, ffi]
     test.case("sqlite3_open_v2 with READWRITE|CREATE, then sqlite3_close_v2")
     let slot = ptr.alloc_word()
-    // 2 is SQLITE_OPEN_READWRITE and 4 is SQLITE_OPEN_CREATE; 0 asks
+    // 2 is SQLITE_OPEN_READWRITE and 4 is SQLITE_OPEN_CREATE.  0 asks
     // for the default virtual file system.
     test.assert(libsqlite3.sqlite3_open_v2(":memory:", slot, 6, 0) == OK)
     let db = ptr.read_word(slot)
@@ -156,7 +158,7 @@ fn test_every_kind_of_value_binds_to_a_parameter() [io, ffi]
     test.assert(ptr.read_str(libsqlite3.sqlite3_bind_parameter_name(stmt, 1)) == ":count")
     test.assert(libsqlite3.sqlite3_bind_int64(stmt, 1, 42) == OK)
     test.assert(libsqlite3.sqlite3_bind_double(stmt, 2, 1.5) == OK)
-    // -1 is SQLITE_TRANSIENT: libsqlite3 copies the bytes before it
+    // -1 is SQLITE_TRANSIENT.  libsqlite3 copies the bytes before it
     // returns, so the novo-lang string need not outlive the call.
     test.assert(libsqlite3.sqlite3_bind_text(stmt, 3, "hello", -1, -1) == OK)
     let raw = ptr.alloc_word()
@@ -164,7 +166,7 @@ fn test_every_kind_of_value_binds_to_a_parameter() [io, ffi]
     test.assert(libsqlite3.sqlite3_bind_blob(stmt, 4, raw, 8, -1) == OK)
     test.assert(libsqlite3.sqlite3_bind_null(stmt, 5) == OK)
     test.assert(libsqlite3.sqlite3_bind_zeroblob(stmt, 6, 4) == OK)
-    // 25 is SQLITE_RANGE: there is no seventh parameter.
+    // 25 is SQLITE_RANGE, because there is no seventh parameter.
     test.assert(libsqlite3.sqlite3_bind_int64(stmt, 7, 0) == 25)
     test.assert(libsqlite3.sqlite3_step(stmt) == ROW)
     test.assert(libsqlite3.sqlite3_column_int64(stmt, 0) == 42)
@@ -189,7 +191,8 @@ fn test_every_kind_of_column_reads_back() [io, ffi]
     let _ = libsqlite3.sqlite3_prepare_v2(db, stmt_text, -1, stmt_slot, 0)
     let stmt = ptr.read_word(stmt_slot)
     test.assert(libsqlite3.sqlite3_step(stmt) == ROW)
-    // The storage classes: 1 integer, 2 float, 3 text, 4 blob, 5 null.
+    // The storage classes are 1 integer, 2 real, 3 text, 4 blob and 5
+    // null.
     test.assert(libsqlite3.sqlite3_column_type(stmt, 0) == 1)
     test.assert(libsqlite3.sqlite3_column_type(stmt, 1) == 2)
     test.assert(libsqlite3.sqlite3_column_type(stmt, 2) == 3)
